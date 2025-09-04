@@ -57,18 +57,23 @@ run_with_spinner() {
     printf "\r${GREEN}%s completed ✅ [Total: %02d:%02d:%02d]${RESET}\n" "$cmd" "$h" "$m" "$s" >&2
 }
 
-# Ctrl+C handler
+# Ctrl+C and error/exit handler
 cleanup() {
     echo -e "\n${YELLOW}Cleaning up...${RESET}"
     sudo umount /mnt/win 2>/dev/null || true
     sudo umount /mnt/boot 2>/dev/null || true
+    sudo umount /mnt/iso 2>/dev/null || true
+    rm -rf "$TEMP_WIN" "$TEMP_BOOT"
     if [[ -n "$DOWNLOADED_ISO" ]]; then
         read -p "Delete downloaded ISO? (y/N): " deliso
         [[ "$deliso" =~ ^[Yy]$ ]] && rm -f "$DOWNLOADED_ISO"
     fi
-    exit 1
 }
+trap cleanup EXIT
+trap cleanup ERR
 trap cleanup INT
+
+# ...existing code...
 
 # =======================
 # Parse CLI arguments
