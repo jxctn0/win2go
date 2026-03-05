@@ -24,6 +24,27 @@ VERBOSE=false
 # Helper functions
 # =======================
 
+check_dependencies() {
+    local deps=("parted" "mkfs.vfat" "mkfs.ntfs" "wimlib-imagex" "lsblk" "wget")
+    local missing=()
+
+    for tool in "${deps[@]}"; do
+        if ! command -v "$tool" &> /dev/null; then
+            missing+=("$tool")
+        fi
+    done
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        echo -e "${RED}Error: Missing required tools: ${missing[*]}${RESET}"
+        echo "Debian/Ubuntu: wimtools, parted, dosfstools, ntfs-3g"
+        echo "Fedora: wimlib-utils, parted, dosfstools, ntfs-3g"
+        echo "Arch Linux/Manjaro: wimlib, parted, dosfstools, ntfs-3g"
+        echo "macOS (using Homebrew / Atomic): wimlib, parted, dosfstools, ntfs-3g, wget"
+        echo "For Atomic systems (Linux containerized), ensure /dev access is allowed for USB"
+        exit 1
+    fi
+}
+
 clear_step() {
     clear
     echo -e "${CYAN}=== $1 ===${RESET}"
@@ -66,14 +87,12 @@ cleanup() {
     rm -rf "$TEMP_WIN" "$TEMP_BOOT"
     if [[ -n "$DOWNLOADED_ISO" ]]; then
         read -p "Delete downloaded ISO? (y/N): " deliso
-        [[ "$deliso" =~ ^[Yy]$ ]] && rm -f "$DOWNLOADED_ISO"
+        [[ "$deliso" =~ ^[Yy](es)?$ ]] && rm -f "$DOWNLOADED_ISO"
     fi
 }
 trap cleanup EXIT
 trap cleanup ERR
 trap cleanup INT
-
-# ...existing code...
 
 # =======================
 # Parse CLI arguments
@@ -92,13 +111,22 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 # =======================
+# Step 0: Dependency check
+# =======================
+
+check_dependencies
+
+# =======================
 # Step 1: ISO Selection
 # =======================
 clear_step "Step 1: Select Windows ISO"
 
 ISOS=()
 for f in ./ ~/Downloads; do
-    ISOS+=( $(find "$f" -maxdepth 1 -type f \( -iname "*win*.iso" -o -iname "*tiny10*.iso" -o -iname "*win10*.iso" -o -iname "*win11*.iso" \) 2>/dev/null) )
+    MATCHES=$(find "$f" -maxdepth 1 -type f \( -iname "*win*.iso" -o -iname "*tiny10*.iso" -o -iname "*win10*.iso" -o -iname "*win11*.iso" \) 2>/dev/null || true)
+    if [[ -n "$MATCHES" ]]; then
+        ISOS+=($MATCHES)
+    fi 
 done
 
 echo "Available ISOs:"
@@ -107,7 +135,7 @@ for i in "${!ISOS[@]}"; do
 done
 echo "$(( ${#ISOS[@]} + 1 ))) Download ISO"
 
-if ! $AUTO_YES || [[ -z "$ISO_FILE" ]]; then
+if [[ -z "$ISO_FILE" ]]; then
     read -p "#? " iso_choice
     if [[ "$iso_choice" -eq $(( ${#ISOS[@]} + 1 )) ]]; then
         echo "1) Official ISO"
@@ -137,7 +165,7 @@ echo -e "${GREEN}Selected ISO: $ISO_FILE${RESET}"
 # =======================
 clear_step "Step 2: Select USB drive"
 
-DRIVES=($(lsblk -dpno NAME,SIZE,MODEL | grep -v "loop\|sr0"))
+IFS=$'\n' DRIVES=($(lsblk -dpno NAME,SIZE,MODEL | grep -v "loop\|sr0"))
 for i in "${!DRIVES[@]}"; do
     echo "$((i+1))) ${DRIVES[$i]}"
 done
@@ -156,14 +184,16 @@ if [[ $SIZE_GB -gt 64 ]]; then
 fi
 
 # Unmount partitions
-MOUNTED=$(lsblk -ln -o MOUNTPOINT "$DRIVE" | grep -v "^$")
+MOUNTED=$(lsblk -ln -o MOUNTPOINT "$DRIVE" | grep -v "^$" || true)
 if [[ -n "$MOUNTED" ]]; then
-    echo "⚠️ $DRIVE is mounted, unmounting..."
-    sudo umount "${DRIVE}"* || true
+    echo "⚠️ $DRIVE is mounted, forcing unmount..."
+    sudo umount -l "${DRIVE}"* 2>/dev/null || true
 fi
 
-read -p "⚠️ This will ERASE all data on $DRIVE. Continue? (yes/no): " yn
-[[ "$yn" != "yes" ]] && exit 1
+sudo udevadm settle
+
+read -p "⚠️ This will ERASE all data on $DRIVE. Continue? (y/N): " yn
+[[ ! "$yn" =~ ^[Yy](es)?$ ]] && exit 1
 
 # =======================
 # Step 3: Partitioning & Formatting
@@ -173,14 +203,38 @@ run_with_spinner "sudo parted $DRIVE --script mklabel gpt"
 run_with_spinner "sudo parted $DRIVE --script mkpart EFI fat32 1MiB 513MiB"
 run_with_spinner "sudo parted $DRIVE --script set 1 esp on"
 run_with_spinner "sudo parted $DRIVE --script mkpart WIN ntfs 513MiB 100%"
-run_with_spinner "sudo mkfs.vfat -F32 ${DRIVE}1"
-run_with_spinner "sudo mkfs.ntfs -f ${DRIVE}2"
+
+# Wait for the OS to see the new partition table before formatting
+echo "Settling partition table..."
+sudo udevadm settle
+sleep 2
+
+echo "Unmount drive and kill processes accessing it..."
+sudo umount -l "${DRIVE}"* 2>/dev/null || true
+sudo fuser -kvm "$DRIVE" >/dev/null 2>&1 || true
+sudo umount -l "${DRIVE}"* 2>/dev/null || true
+
+echo "Settling partition table... again..."
+sudo udevadm settle
+sleep 2
+
+# Logic to support non-USB block devices
+PART1="${DRIVE}1"
+PART2="${DRIVE}2"
+
+if [ ! -b "$PART1" ]; then
+    PART1="${DRIVE}p1"
+    PART2="${DRIVE}p2"
+fi
+
+run_with_spinner "sudo mkfs.vfat -F32 $PART1"
+run_with_spinner "sudo mkfs.ntfs -f $PART2"
 
 # Mount partitions
 sudo mkdir -p /mnt/win /mnt/boot /mnt/iso
-sudo mount "${DRIVE}2" /mnt/win
-sudo mount "${DRIVE}1" /mnt/boot
-sudo mount -o loop "$ISO_FILE" /mnt/iso
+sudo mount "$PART2" /mnt/win
+sudo mount "$PART1" /mnt/boot
+sudo mount -t iso9660,udf -o loop,ro "$ISO_FILE" /mnt/iso
 
 # =======================
 # Step 4: Extract WIM to temp
@@ -190,7 +244,15 @@ TEMP_WIN=$(mktemp -d)
 TEMP_BOOT=$(mktemp -d)
 
 IMAGE_INDEX=1  # Default index, could add multi-index selection
-run_with_spinner "sudo wimlib-imagex apply /mnt/iso/sources/install.esd $IMAGE_INDEX $TEMP_WIN --no-acls --no-attributes --include-invalid-names"
+
+# Check if it's .wim or .esd
+if [ -f /mnt/iso/sources/install.wim ]; then
+    WIM_PATH="/mnt/iso/sources/install.wim"
+else
+    WIM_PATH="/mnt/iso/sources/install.esd"
+fi
+
+run_with_spinner "sudo wimlib-imagex apply $WIM_PATH $IMAGE_INDEX $TEMP_WIN --no-acls --no-attributes --include-invalid-names"
 
 # Copy EFI/boot to temp
 [[ -d "$TEMP_WIN/EFI" ]] && cp -r "$TEMP_WIN/EFI" "$TEMP_BOOT/"
