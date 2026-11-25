@@ -6,7 +6,7 @@ Este archivo contiene **instrucciones de trabajo para Codex y otros agentes**. L
 
 Crear desde Linux una memoria USB con Windows To Go y arranque UEFI, sin poner en riesgo el disco del sistema anfitrión. El repositorio contiene `win2go.sh`, diagnósticos en `scripts/` y pruebas en `tests/`.
 
-**Estado actual:** el código ha pasado algunas pruebas de sintaxis y de entradas inválidas, pero **no se ha verificado todavía un arranque real de Windows en hardware físico**. No afirmar que la herramienta ya es segura o funcional de extremo a extremo sin evidencia.
+**Estado actual:** **No se ha verificado todavía un arranque real de Windows en hardware físico**. Consultar `FIXES.md` para conocer el alcance de las pruebas. No afirmar que la herramienta ya es segura o funcional de extremo a extremo sin evidencia.
 
 ## Reglas obligatorias de seguridad
 
@@ -18,18 +18,18 @@ Crear desde Linux una memoria USB con Windows To Go y arranque UEFI, sin poner e
 6. El script `scripts/usb-health.sh` es de **solo lectura**; mantener esa propiedad. Una lectura correcta no certifica capacidad real, fiabilidad de escritura ni arranque de Windows.
 7. No publicar un PR upstream ni efectuar operaciones de borrado reales automáticamente. Preparar cambios en la rama de trabajo, ejecutar pruebas y resumir los resultados y riesgos pendientes.
 
-## Correcciones prioritarias pendientes
+## Criterios de mantenimiento
 
 ### 1. Proteger la ISO de origen (prioridad alta)
 
 - Localizar el dispositivo real que respalda el archivo ISO, incluso cuando está almacenado en una partición del mismo USB, usando información de `findmnt`, `lsblk` y relaciones padre/hijo.
 - Evitar que la unidad de destino sea la misma que contiene la ISO. Un simple cotejo de cadenas `/dev/sdb` vs `/dev/sdb1` no basta para todos los casos.
-- Añadir pruebas para ISO en el disco de destino, ISO en otro disco, ISO en sistema de archivos no resoluble y cambios de identidad del dispositivo. Si no se puede confirmar, detenerse antes del borrado.
+- Mantener pruebas para ISO en el disco de destino, ISO en otro disco, ISO en sistema de archivos no resoluble y cambios de identidad del dispositivo. Si no se puede confirmar, detenerse antes del borrado.
 
-### 2. Corregir exit status del verificador (prioridad alta)
+### 2. Verificar los códigos de salida de dependencias (prioridad alta)
 
-- En `scripts/deps-ubuntu.sh --check`, devolver código de salida distinto de cero cuando falten comandos requeridos. Actualmente el modo de comprobación termina con `exit 0` incluso cuando `check_commands` falla.
-- Añadir una prueba automatizada que simule una dependencia ausente y confirme que el proceso falla; comprobar que el modo normal termina en cero con todas las dependencias presentes.
+- En `scripts/deps-ubuntu.sh --check`, devolver código de salida distinto de cero cuando falten comandos requeridos.
+- Mantener una prueba automatizada que simule una dependencia ausente y confirme que el proceso falla; comprobar que el modo normal termina en cero con todas las dependencias presentes.
 
 ### 3. Aumentar cobertura de pruebas sin riesgo (prioridad alta)
 
@@ -40,7 +40,7 @@ Crear desde Linux una memoria USB con Windows To Go y arranque UEFI, sin poner e
 
 ### 4. Higiene del repositorio (prioridad baja)
 
-- Retirar el archivo accidental `New changes`, que contiene un diff antiguo con códigos ANSI, una vez comprobado que no tiene contenido necesario.
+- Mantener el repositorio libre de diffs y archivos temporales accidentales.
 - Mantener `AGENTS.md` como instrucciones operativas; dejar el registro de modificaciones y resultados en `FIXES.md` o en los mensajes de commit.
 - Mantener consistentes las instrucciones de uso de `README.md` con las opciones realmente soportadas por el instalador.
 
@@ -51,6 +51,8 @@ bash -n win2go.sh
 bash -n scripts/deps-ubuntu.sh
 bash -n scripts/usb-health.sh
 bash tests/smoke.sh
+bash tests/dependencies.sh
+bash tests/integration.sh
 git diff --check
 ```
 

@@ -20,6 +20,10 @@ jobs:
           for script in win2go.sh scripts/*.sh tests/*.sh; do
             bash -n "$script"
           done
-      - name: Run nondestructive smoke tests
+      - name: Run nondestructive tests
         shell: bash
-        run: bash tests/smoke.sh
+        run: |
+          set -e
+          bash tests/smoke.sh
+          bash tests/dependencies.sh
+          bash tests/integration.sh

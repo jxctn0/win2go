@@ -23,8 +23,8 @@ fi
 packages=(sudo udev git ca-certificates util-linux fdisk bsdextrautils parted dosfstools ntfs-3g wimtools
           libhivex-bin libwin-hivex-perl pev attr fatattr)
 
-required_commands=(sudo git lsblk findmnt readlink sfdisk hexdump parted partprobe udevadm
-                   mkfs.vfat mkfs.ntfs ntfs-3g mount umount wimlib-imagex
+required_commands=(sudo git lsblk findmnt losetup readlink stat sfdisk hexdump parted partprobe udevadm
+                   mkfs.vfat mkfs.ntfs ntfs-3g mount umount mountpoint wimlib-imagex
                    hivexsh hivexregedit readpe peres setfattr fatattr bcd-sys)
 missing=()
 check_commands() {
@@ -42,7 +42,7 @@ check_commands() {
 }
 
 if [[ "$mode" == "--check" ]]; then
-  check_commands
+  check_commands || exit $?
   exit 0
 fi
 
