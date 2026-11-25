@@ -139,7 +139,7 @@ La primera comprobación PE trataba `winload.efi` como aplicación EFI genérica
 
 SHA-256 registrado de la ISO: `bf02c401644a4a9249ee206faa9fd1691f4ec18bb37a9ea4ffe5c010dc147492`. Es una huella de la copia probada. La comparación con una huella oficial queda pendiente.
 
-Antes de una prueba física, queda por verificar que BCD-SYS escriba el BCD y el cargador de respaldo en la ESP y que Windows complete el primer arranque desde el USB virtual.
+Las secciones siguientes registran la generación del BCD y la prueba de arranque virtual posteriores.
 
 ### Reanudación desde a2cbb81
 
@@ -157,6 +157,19 @@ Los componentes que consultan esos metadatos podrían comportarse de forma disti
 
 ### BCD-SYS ejecutado sobre la RAW original
 
-BCD-SYS generó el almacén y los binarios EFI en el loop de la RAW identificada. El validado posterior leyó los tres archivos directamente de la ESP en modo de solo lectura. El BCD contiene una entrada predeterminada en el orden de arranque que apunta a `\Windows\system32\winload.efi`. `bootmgfw.efi` y `BOOTX64.efi` son aplicaciones EFI x86-64 idénticas. BCD-SYS avisó que el anfitrión carecía de acceso a variables EFI. Se configuró la ruta de arranque de respaldo en la ESP. El arranque bajo OVMF sigue pendiente.
+BCD-SYS generó el almacén y los binarios EFI en el loop de la RAW identificada. El validado posterior leyó los tres archivos directamente de la ESP en modo de solo lectura. El BCD contiene una entrada predeterminada en el orden de arranque que apunta a `\Windows\system32\winload.efi`. `bootmgfw.efi` y `BOOTX64.efi` son aplicaciones EFI x86-64 idénticas. BCD-SYS avisó que el anfitrión carecía de acceso a variables EFI. Se configuró la ruta de arranque de respaldo en la ESP.
 
 La primera ejecución real detectó que `losetup -r` significa solo lectura y se rechaza en consultas de identidad. La consulta usa ahora `--raw`. El escritorio había automontado el NTFS del loop. Tras comprobar el inodo y el origen del montaje, se desmontó únicamente ese volumen. El laboratorio admite reutilizar explícitamente el loop verificado, siempre que esté desmontado. El NTFS se montó en solo lectura dentro del espacio de nombres del laboratorio y se liberó el loop al finalizar.
+
+### Arranque UEFI observado en QEMU
+
+La RAW de Windows 10 Pro x86-64 arrancó como almacenamiento USB virtual en QEMU 8.2.2 con OVMF 2024.02, ventana GTK, dos vCPU y 2 GiB de RAM. El monitor confirmó KVM activo y un dispositivo USB de 5 Gb/s. La red estaba desactivada. El monitor confirmó una capa qcow2 temporal sobre la RAW y una copia privada de las variables OVMF. La RAW conservó su inodo, tamaño y marcas de modificación y cambio durante la prueba.
+
+| Hito | Evidencia |
+| --- | --- |
+| OVMF selecciona el USB | La consola y `01-boot.png` registran que OVMF cargó e inició `UEFI QEMU QEMU USB HARDDRIVE`. |
+| Boot Manager, `winload.efi` y kernel | La pantalla pasó a «Preparando» y después a OOBE. Esa transición confirma que la cadena de arranque llegó a ejecutar Windows. |
+| OOBE | `16-oobe.png` muestra la selección de distribución de teclado, unos 16 minutos después de la primera captura. `21-oobe.png` muestra las opciones de configuración sin red. |
+| Inicio de sesión o escritorio | La última etapa verificada es el contrato de licencia de Windows que muestra `26-oobe.png`. La prueba se detuvo en ese punto a la espera de autorización para aceptar los términos. |
+
+Los registros y capturas quedaron en el directorio de evidencia local anunciado por el lanzador. Pasaron las suites de sintaxis, dependencias, integración e imágenes. El lanzador existente funcionó durante la prueba. Quedan pendientes la finalización de OOBE y la validación en hardware físico.
