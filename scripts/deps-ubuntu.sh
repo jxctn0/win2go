@@ -11,10 +11,13 @@ mode="${1:---check}"
 [[ $# -le 1 && ( "$mode" == "--check" || "$mode" == "--install" ) ]] || usage
 [[ -r /etc/os-release ]] || { echo "Unsupported system: missing /etc/os-release" >&2; exit 1; }
 . /etc/os-release
-case "${ID:-}:${ID_LIKE:-}" in
-  ubuntu:*|linuxmint:*|*:* ubuntu*|*:* debian*) ;;
-  *) echo "This installer supports Ubuntu and Linux Mint only." >&2; exit 1 ;;
-esac
+# Bash conditionals avoid invalid unquoted spaces in case patterns.
+if [[ "${ID:-}" != "ubuntu" && "${ID:-}" != "linuxmint" &&
+      " ${ID_LIKE:-} " != *" ubuntu "* &&
+      " ${ID_LIKE:-} " != *" debian "* ]]; then
+  echo "This installer supports Ubuntu and Linux Mint only." >&2
+  exit 1
+fi
 
 # These packages provide hivexsh/hivexregedit, readpe/peres, and the
 # FAT32/NTFS utilities used by BCD-SYS and Win2Go.
