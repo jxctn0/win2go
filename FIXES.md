@@ -140,3 +140,17 @@ La primera comprobación PE trataba `winload.efi` como aplicación EFI genérica
 SHA-256 registrado de la ISO: `bf02c401644a4a9249ee206faa9fd1691f4ec18bb37a9ea4ffe5c010dc147492`. Es una huella de la copia probada. La comparación con una huella oficial queda pendiente.
 
 Antes de una prueba física, queda por verificar que BCD-SYS escriba el BCD y el cargador de respaldo en la ESP y que Windows complete el primer arranque desde el USB virtual.
+
+### Reanudación desde a2cbb81
+
+- Se reutilizó la RAW de 32 GiB de la prueba inicial (UID 1000, modo 0600, un enlace, inodo 4589254). `sfdisk --verify` y las sondas a los desplazamientos de ambas particiones confirmaron GPT, FAT32 y NTFS. La inspección de la ESP mostró un directorio vacío. La consulta por archivo de respaldo y los montajes visibles no mostraron asociaciones de pruebas anteriores.
+- El intento autorizado de generar el BCD registró `sudo: a password is required` antes de crear el loop. Quedan pendientes el BCD, ambas copias del Boot Manager en la ESP y la verificación de las referencias del BCD real.
+- El entorno informó 4 CPU lógicas (Core i5-3320M con VT-x), 7,4 GiB de RAM total, 2,6 GiB disponibles y 51 GiB libres. No exponía `/dev/kvm` ni `/dev/loop-control`. QEMU, su paquete de interfaz gráfica y OVMF estaban ausentes. Se dejó la instalación de paquetes pendiente al detenerse en la etapa BCD.
+- El comando `boot` acepta un quinto argumento `gtk` o `sdl` para observar la pantalla. El valor predeterminado `none` conserva el modo sin ventana. Con acceso de lectura y escritura a `/dev/kvm`, intenta KVM con TCG de respaldo. La consola `info kvm` distingue el acelerador activo de la preferencia que anota el registro. Guarda las capturas con `screendump etapa.ppm` y evita `commit` en el monitor para preservar la imagen base. [Invocación de QEMU](https://www.qemu.org/docs/master/system/invocation.html) · [Monitor de QEMU](https://www.qemu.org/docs/master/system/monitor.html)
+- Ningún hito de inicio fue observado. Siguen pendientes el reconocimiento del USB por OVMF, la ejecución de Boot Manager, el inicio de `winload.efi`, la ejecución del kernel, la llegada a OOBE y el inicio de sesión o escritorio.
+
+#### Atributos extendidos omitidos
+
+En wimlib 1.14.4 el aviso cuenta inodos con atributos extendidos, una vez por inodo aunque existan varios enlaces duros. La aplicación directa mediante el backend NTFS-3G no declara soporte para restaurarlos. Ese recuento es independiente de los datos de archivo, los flujos con nombre, los descriptores de seguridad y los puntos de reanálisis. El registro de esta aplicación conserva el total de 11 393, pero no enumera rutas, nombres de atributos ni valores. Los atributos ausentes tampoco pueden inventariarse a partir de la copia ya aplicada. [Recuento y avisos de wimlib](https://github.com/ebiggers/wimlib/blob/v1.14.4/src/extract.c#L1173-L1205) · [Backend NTFS-3G de wimlib](https://github.com/ebiggers/wimlib/blob/v1.14.4/src/ntfs-3g_apply.c#L49-L69)
+
+Los componentes que consultan esos metadatos podrían comportarse de forma distinta. Windows contempla atributos con la marca `FILE_NEED_EA`, y el registro obtenido no permite determinar si la tenían los atributos de esta edición ni si afectan al arranque. El aviso por sí solo no permite atribuirle un fallo de Boot Manager, del cargador o del kernel. [Especificación de atributos extendidos de Microsoft](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fscc/0eb94f48-6aac-41df-a878-79f4dcfd8989)

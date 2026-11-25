@@ -44,3 +44,21 @@ expect_failure "virtual BCD refuses loop writes without explicit opt-in" 1 "requ
   bash tests/windows-image.sh bcd /tmp/win2go-test-no-image --no-loop-writes
 
 echo "NOTE: Physical Windows boot remains unverified."
+
+(
+  source tests/windows-image.sh
+  work=$(mktemp -d)
+  trap 'rm -rf -- "$work"' EXIT
+  mkdir "$work/raw-build"
+  touch "$work/raw-build/windows-togo.raw" "$work/code.fd" "$work/vars.fd"
+  echo 'PASS: BCD-SYS created a readable BCD and x64 boot files' > "$work/bcd.log"
+  free_bytes() { echo 4294967296; }
+  qemu-system-x86_64() { printf '%s\n' "$@"; }
+  output=$(boot_raw "$work" "$work/code.fd" "$work/vars.fd" gtk)
+  [[ "$output" == *$'-display\ngtk\n'* &&
+     "$output" == *$'-smp\n2\n-m\n2048\n-nic\nnone\n'* &&
+     "$output" == *'snapshot=on,file='* &&
+     "$output" == *'usb-storage,bus=usb.0,drive=wintogo,bootindex=1'* ]]
+  grep -Fqx 'Display: gtk' "$work"/qemu.*/qemu.log
+  echo 'PASS: graphical QEMU arguments and logging (mocked)'
+)

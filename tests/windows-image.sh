@@ -285,26 +285,30 @@ install_bcd() {
 
 boot_raw() {
     require qemu-system-x86_64
-    local work=$1 code=$2 vars=$3 disk="$1/raw-build/windows-togo.raw" evidence
+    local work=$1 code=$2 vars=$3 disk="$1/raw-build/windows-togo.raw" display=$4 evidence
+    local accel=tcg
+    case "$display" in none|gtk|sdl) ;; *) die "Display must be none, gtk or sdl" ;; esac
     regular "$code" && regular "$vars" && regular "$disk" || die "Supply regular RAW and matching OVMF files"
     [[ -f "$work/bcd.log" ]] &&
         grep -Fxq 'PASS: BCD-SYS created a readable BCD and x64 boot files' "$work/bcd.log" ||
         die "A successful BCD stage is required (save stdout to bcd.log)"
+    code=$(realpath -- "$code")
+    disk=$(realpath -- "$disk")
     [[ "$code$disk" != *,* ]] || die "QEMU paths cannot contain commas"
     (( $(free_bytes "$work") >= 4 * 1024**3 )) || die "Insufficient space for guest snapshot"
     evidence=$(mktemp -d -- "$work/qemu.XXXXXXXX")
     cp -- "$vars" "$evidence/OVMF_VARS.fd"
-    code=$(realpath -- "$code")
-    disk=$(realpath -- "$disk")
+    if [[ -c /dev/kvm && -r /dev/kvm && -w /dev/kvm ]]; then accel=kvm:tcg; fi
     echo "Evidence directory: $evidence"
     cd -- "$evidence"
-    TMPDIR="$PWD" qemu-system-x86_64 -machine q35,accel=tcg -cpu max -smp 2 -m 2048 \
-        -nic none -display none -monitor stdio -vga std -serial file:serial.log \
+    printf 'Acceleration preference: %s\nDisplay: %s\n' "$accel" "$display" | tee qemu.log
+    TMPDIR="$PWD" qemu-system-x86_64 -machine "q35,accel=$accel" -cpu max -smp 2 -m 2048 \
+        -nic none -display "$display" -monitor stdio -vga std -serial file:serial.log \
         -drive "if=pflash,format=raw,readonly=on,file=$code" \
         -drive if=pflash,format=raw,file=OVMF_VARS.fd \
         -device qemu-xhci,id=usb \
         -drive "if=none,id=wintogo,format=raw,snapshot=on,file=$disk" \
-        -device usb-storage,bus=usb.0,drive=wintogo,bootindex=1 2>&1 | tee qemu.log
+        -device usb-storage,bus=usb.0,drive=wintogo,bootindex=1 2>&1 | tee -a qemu.log
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
@@ -314,7 +318,8 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
         assemble) [[ $# == 2 ]] || die "Usage: $0 assemble WORK_DIR"
             assemble_raw "$2/raw-build" 2>&1 | tee "$2/raw-build/assemble.log" ;;
         bcd) [[ $# == 3 ]] || die "Usage: $0 bcd WORK_DIR --allow-loop-writes"; install_bcd "$2" "$3" ;;
-        boot) [[ $# == 4 ]] || die "Usage: $0 boot WORK_DIR OVMF_CODE OVMF_VARS"; boot_raw "$2" "$3" "$4" ;;
+        boot) [[ $# == 4 || $# == 5 ]] || die "Usage: $0 boot WORK_DIR OVMF_CODE OVMF_VARS [none|gtk|sdl]"
+            boot_raw "$2" "$3" "$4" "${5:-none}" ;;
         *) die "Usage: $0 {inspect|prepare|assemble|bcd|boot} ..." ;;
     esac
 fi
