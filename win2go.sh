@@ -95,88 +95,45 @@ done
 # Step 1: ISO Selection
 # =======================
 clear_step "Step 1: Select Windows ISO"
-
-ISOS=()
-for f in ./ "${SUDO_USER:+$(getent passwd "$SUDO_USER" | cut -d: -f6)/Downloads}" ~/Downloads; do
-    [[ -d "$f" ]] || continue
-    while IFS= read -r -d '' found_iso; do ISOS+=("$found_iso"); done < <(find "$f" -maxdepth 1 -type f -iname "*.iso" -print0 2>/dev/null || true)
-done
-
-echo "Available ISOs:"
-for i in "${!ISOS[@]}"; do
-    echo "$((i+1))) ${ISOS[$i]}"
-done
-echo "$(( ${#ISOS[@]} + 1 ))) Download ISO"
-
-if ! $AUTO_YES || [[ -z "$ISO_FILE" ]]; then
-    read -p "#? " iso_choice
-    if [[ "$iso_choice" -eq $(( ${#ISOS[@]} + 1 )) ]]; then
-        echo "1) Official ISO"
-        echo "2) Tiny10 ISO"
-        read -p "Choice: " dlchoice
-        if [[ "$dlchoice" -eq 1 ]]; then
-            read -p "Enter ISO URL: " ISO_FILE
-        else
-            ISO_FILE="https://archive.org/download/tiny-10-23-h2/tiny10%20x64%2023h2.iso"
-        fi
-    else
-        ISO_FILE="${ISOS[$((iso_choice-1))]}"
-    fi
+if [[ -z "$ISO_FILE" ]]; then
+    ISOS=()
+    SEARCH_HOME="${SUDO_USER:+$(getent passwd "$SUDO_USER" | cut -d: -f6)}"
+    for dir in "$PWD" "${SEARCH_HOME:-$HOME}/Downloads" "${SEARCH_HOME:-$HOME}/Descargas"; do
+        [[ -d "$dir" ]] || continue
+        while IFS= read -r -d '' iso; do ISOS+=("$iso"); done < <(
+            find "$dir" -maxdepth 1 -type f -iname '*.iso' -print0 2>/dev/null || true
+        )
+    done
+    (("${#ISOS[@]}" > 0)) || { echo "No ISOs found. Use --iso /path/to/windows.iso" >&2; exit 1; }
+    for i in "${!ISOS[@]}"; do printf '%d) %s\n' "$((i+1))" "${ISOS[$i]}"; done
+    read -r -p "Choose ISO number: " iso_choice
+    [[ "$iso_choice" =~ ^[1-9][0-9]*$ ]] &&
+        (( iso_choice <= ${#ISOS[@]} )) || { echo "Invalid ISO selection" >&2; exit 1; }
+    ISO_FILE="${ISOS[$((iso_choice-1))]}"
 fi
-
-# Download ISO if URL
-if [[ "$ISO_FILE" =~ ^https?:// ]]; then
-    DOWNLOADED_ISO="./$(basename "$ISO_FILE")"
-    ISO_FILE="$DOWNLOADED_ISO"
-    echo "Downloading ISO..."
-    echo "ERROR: Automatic ISO downloads are not supported. Download the ISO yourself and rerun with --iso." >&2
-    exit 1
-fi
+[[ -f "$ISO_FILE" && -r "$ISO_FILE" ]] || { echo "ISO not found: $ISO_FILE" >&2; exit 1; }
+ISO_FILE=$(readlink -f -- "$ISO_FILE")
 echo -e "${GREEN}Selected ISO: $ISO_FILE${RESET}"
 
 # =======================
 # Step 2: USB Drive Selection
 # =======================
 clear_step "Step 2: Select USB drive"
-
-# Detectar únicamente unidades USB físicas
-mapfile -t DRIVES < <(
-    lsblk -dnpo NAME,TYPE,TRAN |
-    awk '$2=="disk" && $3=="usb" {print $1}'
-)
-
-if [[ ${#DRIVES[@]} -eq 0 ]]; then
-    echo "ERROR: No se encontraron unidades USB."
-    exit 1
+mapfile -t DRIVES < <(lsblk -dnpo NAME,TYPE,TRAN | awk '$2=="disk" && $3=="usb" {print $1}')
+(("${#DRIVES[@]}" > 0)) || { echo "No USB disks found" >&2; exit 1; }
+if [[ -z "$DRIVE" ]]; then
+    for i in "${!DRIVES[@]}"; do
+        printf '%d) %s - %s\n' "$((i+1))" "${DRIVES[$i]}" "$(lsblk -dn -o SIZE,MODEL "${DRIVES[$i]}")"
+    done
+    read -r -p "Select USB disk number: " choice
+    [[ "$choice" =~ ^[1-9][0-9]*$ ]] && (( choice <= ${#DRIVES[@]} )) ||
+        { echo "Invalid USB selection" >&2; exit 1; }
+    DRIVE="${DRIVES[$((choice-1))]}"
 fi
-
-echo "Unidades USB disponibles:"
-
-for i in "${!DRIVES[@]}"; do
-    DRIVE_INFO=$(lsblk -dn -o SIZE,MODEL "${DRIVES[$i]}")
-    echo "$((i+1))) ${DRIVES[$i]} - $DRIVE_INFO"
-done
-
-# Selección con validación
-while true; do
-    read -r -p "Selecciona el número de la USB: " drv_choice
-
-    if [[ "$drv_choice" =~ ^[0-9]+$ ]] &&
-       (( drv_choice >= 1 && drv_choice <= ${#DRIVES[@]} )); then
-        DRIVE="${DRIVES[$((drv_choice-1))]}"
-        break
-    fi
-
-    echo "Selección inválida."
-done
-
-# Verificar que la unidad seleccionada es USB
-if [[ "$(lsblk -dn -o TRAN "$DRIVE")" != "usb" ]]; then
-    echo "ERROR: La unidad seleccionada no es USB."
-    exit 1
-fi
-
-echo "Unidad seleccionada: $DRIVE"
+DRIVE=$(readlink -f -- "$DRIVE")
+[[ -b "$DRIVE" && "$(lsblk -dn -o TYPE "$DRIVE")" == disk && "$(lsblk -dn -o TRAN "$DRIVE")" == usb ]] ||
+    { echo "ERROR: Target must be a whole USB disk" >&2; exit 1; }
+echo "Selected USB disk: $DRIVE"
 
 # Warn large drives
 SIZE_GB=$(lsblk -dn -b -o SIZE "$DRIVE")
@@ -189,7 +146,7 @@ fi
 # Unmount partitions
 MOUNTED=$(lsblk -ln -o MOUNTPOINT "$DRIVE" | grep -v "^$" || true)
 if [[ -n "$MOUNTED" ]]; then
-    echo "⚠️ $DRIVE is mounted, unmounting..."
+    echo "⚠️ $DRIVE has mounted partitions."
     echo "ERROR: Unmount all partitions before continuing; refusing to force unmount." >&2
     exit 1
 fi
@@ -201,6 +158,23 @@ done
 [[ "$(lsblk -dn -o TYPE "$DRIVE")" == "disk" && "$(lsblk -dn -o TRAN "$DRIVE")" == "usb" ]] || {
     echo "ERROR: Target is not a whole USB disk." >&2; exit 1;
 }
+# Read and validate Windows image BEFORE erasing anything.
+sudo mkdir -p /mnt/iso
+sudo mount -o loop,ro "$ISO_FILE" /mnt/iso
+WIM=""
+for name in install.wim install.esd; do
+    if [[ -f "/mnt/iso/sources/$name" ]]; then WIM="/mnt/iso/sources/$name"; break; fi
+done
+[[ -n "$WIM" ]] || { echo "ERROR: ISO does not contain install.wim/install.esd" >&2; exit 1; }
+wimlib-imagex info "$WIM" | grep -E '^(Index|Name):' || true
+read -r -p "Choose Windows edition index: " IMAGE_INDEX
+[[ "$IMAGE_INDEX" =~ ^[1-9][0-9]*$ ]] &&
+    wimlib-imagex info "$WIM" "$IMAGE_INDEX" >/dev/null ||
+    { echo "ERROR: Invalid Windows image index" >&2; exit 1; }
+# Do not permit the ISO to be stored on the disk that will be erased.
+ISO_SOURCE=$(findmnt -n -o SOURCE --target "$ISO_FILE" || true)
+[[ "$ISO_SOURCE" != "$DRIVE"* ]] ||
+    { echo "ERROR: ISO is stored on target USB" >&2; exit 1; }
 read -p "⚠️ This will ERASE all data on $DRIVE. Continue? (yes/no): " yn
 if [[ "$yn" != "yes" ]]; then echo "Canceled."; exit 1; fi
 
@@ -226,21 +200,6 @@ sudo mkfs.vfat -F32 "$PART1"
 sudo mkfs.ntfs -f "$PART2"
 
 sudo mkdir -p /mnt/win /mnt/boot /mnt/iso
-sudo mount -o loop,ro "$ISO_FILE" /mnt/iso
-WIM=""
-for filename in install.wim install.esd; do
-    if [[ -f "/mnt/iso/sources/$filename" ]]; then
-        WIM="/mnt/iso/sources/$filename"
-        break
-    fi
-done
-[[ -n "$WIM" ]] || { echo "ERROR: The ISO has no install.wim/install.esd" >&2; exit 1; }
-echo "Available Windows image editions:"
-wimlib-imagex info "$WIM" | grep -E '^(Index|Name):' || true
-read -r -p "Choose image index: " IMAGE_INDEX
-[[ "$IMAGE_INDEX" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid image index" >&2; exit 1; }
-wimlib-imagex info "$WIM" "$IMAGE_INDEX" >/dev/null
-
 clear_step "Step 4: Applying Windows image to NTFS"
 # Direct NTFS application preserves NTFS metadata better than extracting to ext4.
 sudo wimlib-imagex apply "$WIM" "$IMAGE_INDEX" "$PART2"
