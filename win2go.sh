@@ -63,15 +63,15 @@ cleanup() {
     sudo umount /mnt/win 2>/dev/null || true
     sudo umount /mnt/boot 2>/dev/null || true
     sudo umount /mnt/iso 2>/dev/null || true
-    rm -rf "$TEMP_WIN" "$TEMP_BOOT"
-    if [[ -n "$DOWNLOADED_ISO" ]]; then
+    [[ -z "${TEMP_WIN:-}" ]] || rm -rf -- "$TEMP_WIN"
+    [[ -z "${TEMP_BOOT:-}" ]] || rm -rf -- "$TEMP_BOOT"
+    if [[ -n "${DOWNLOADED_ISO:-}" ]]; then
         read -p "Delete downloaded ISO? (y/N): " deliso
-        [[ "$deliso" =~ ^[Yy]$ ]] && rm -f "$DOWNLOADED_ISO"
+        if [[ "$deliso" =~ ^[Yy]$ ]]; then rm -f -- "$DOWNLOADED_ISO"; fi
     fi
 }
 trap cleanup EXIT
-trap cleanup ERR
-trap cleanup INT
+trap 'exit 130' INT
 
 # ...existing code...
 
@@ -97,8 +97,9 @@ done
 clear_step "Step 1: Select Windows ISO"
 
 ISOS=()
-for f in ./ ~/Downloads; do
-    ISOS+=( $(find "$f" -maxdepth 1 -type f \( -iname "*win*.iso" -o -iname "*tiny10*.iso" -o -iname "*win10*.iso" -o -iname "*win11*.iso" \) 2>/dev/null) )
+for f in ./ "${SUDO_USER:+$(getent passwd "$SUDO_USER" | cut -d: -f6)/Downloads}" ~/Downloads; do
+    [[ -d "$f" ]] || continue
+    while IFS= read -r -d '' found_iso; do ISOS+=("$found_iso"); done < <(find "$f" -maxdepth 1 -type f -iname "*.iso" -print0 2>/dev/null || true)
 done
 
 echo "Available ISOs:"
@@ -128,7 +129,8 @@ if [[ "$ISO_FILE" =~ ^https?:// ]]; then
     DOWNLOADED_ISO="./$(basename "$ISO_FILE")"
     ISO_FILE="$DOWNLOADED_ISO"
     echo "Downloading ISO..."
-    run_with_spinner "wget -O \"$ISO_FILE\" \"$ISO_FILE\""
+    echo "ERROR: Automatic ISO downloads are not supported. Download the ISO yourself and rerun with --iso." >&2
+    exit 1
 fi
 echo -e "${GREEN}Selected ISO: $ISO_FILE${RESET}"
 
@@ -181,80 +183,80 @@ SIZE_GB=$(lsblk -dn -b -o SIZE "$DRIVE")
 SIZE_GB=$((SIZE_GB / 1024 / 1024 / 1024))
 if [[ $SIZE_GB -gt 64 ]]; then
     read -p "⚠️ WARNING: $DRIVE is larger than 64GB. Type YES to continue: " yn
-    [[ "$yn" != "YES" ]] && exit 1
+    if [[ "$yn" != "YES" ]]; then echo "Canceled."; exit 1; fi
 fi
 
 # Unmount partitions
-MOUNTED=$(lsblk -ln -o MOUNTPOINT "$DRIVE" | grep -v "^$")
+MOUNTED=$(lsblk -ln -o MOUNTPOINT "$DRIVE" | grep -v "^$" || true)
 if [[ -n "$MOUNTED" ]]; then
     echo "⚠️ $DRIVE is mounted, unmounting..."
-    sudo umount "${DRIVE}"* || true
+    echo "ERROR: Unmount all partitions before continuing; refusing to force unmount." >&2
+    exit 1
 fi
 
+# Essential preflight: do not erase a device if Windows boot configuration cannot be built.
+for cmd in parted partprobe udevadm mkfs.vfat mkfs.ntfs wimlib-imagex bcd-sys mount; do
+    command -v "$cmd" >/dev/null || { echo "ERROR: Missing dependency: $cmd" >&2; exit 1; }
+done
+[[ "$(lsblk -dn -o TYPE "$DRIVE")" == "disk" && "$(lsblk -dn -o TRAN "$DRIVE")" == "usb" ]] || {
+    echo "ERROR: Target is not a whole USB disk." >&2; exit 1;
+}
 read -p "⚠️ This will ERASE all data on $DRIVE. Continue? (yes/no): " yn
-[[ "$yn" != "yes" ]] && exit 1
+if [[ "$yn" != "yes" ]]; then echo "Canceled."; exit 1; fi
 
 # =======================
 # Step 3: Partitioning & Formatting
 # =======================
 clear_step "Step 3: Partitioning $DRIVE"
-run_with_spinner "sudo parted $DRIVE --script mklabel gpt"
-run_with_spinner "sudo parted $DRIVE --script mkpart EFI fat32 1MiB 513MiB"
-run_with_spinner "sudo parted $DRIVE --script set 1 esp on"
-run_with_spinner "sudo parted $DRIVE --script mkpart WIN ntfs 513MiB 100%"
-run_with_spinner "sudo mkfs.vfat -F32 ${DRIVE}1"
-run_with_spinner "sudo mkfs.ntfs -f ${DRIVE}2"
-
-# Mount partitions
-sudo mkdir -p /mnt/win /mnt/boot /mnt/iso
-sudo mount "${DRIVE}2" /mnt/win
-sudo mount "${DRIVE}1" /mnt/boot
-sudo mount -o loop "$ISO_FILE" /mnt/iso
-
-# =======================
-# Step 4: Extract WIM to temp
-# =======================
-clear_step "Step 4: Extract Windows image to temp folder"
-TEMP_WIN=$(mktemp -d)
-TEMP_BOOT=$(mktemp -d)
-
-IMAGE_INDEX=1  # Default index, could add multi-index selection
-run_with_spinner "sudo wimlib-imagex apply /mnt/iso/sources/install.esd $IMAGE_INDEX $TEMP_WIN --no-acls --no-attributes --include-invalid-names"
-
-# Copy EFI/boot to temp
-[[ -d "$TEMP_WIN/EFI" ]] && cp -r "$TEMP_WIN/EFI" "$TEMP_BOOT/"
-[[ -d "$TEMP_WIN/boot" ]] && cp -r "$TEMP_WIN/boot" "$TEMP_BOOT/"
-
-# =======================
-# Step 5: Copy to USB
-# =======================
-clear_step "Step 5: Copying Windows files to USB"
-run_with_spinner "sudo rsync -ah --info=progress2 $TEMP_WIN/ /mnt/win/"
-run_with_spinner "sudo rsync -ah --info=progress2 $TEMP_BOOT/ /mnt/boot/"
-
-# =======================
-# Step 6: Driver Installation
-# =======================
-if [[ -n "$DRIVERS" && -d "$DRIVERS" ]]; then
-    clear_step "Step 6: Installing drivers for first boot"
-    sudo cp -r "$DRIVERS"/* /mnt/win/Drivers/
-    echo "SetupComplete.cmd" > /mnt/win/Windows/Setup/Scripts/SetupComplete.cmd
+# UEFI only; a working Windows installation also requires a valid BCD store.
+run_with_spinner "sudo parted \"$DRIVE\" --script mklabel gpt"
+run_with_spinner "sudo parted \"$DRIVE\" --script mkpart ESP fat32 1MiB 513MiB"
+run_with_spinner "sudo parted \"$DRIVE\" --script set 1 esp on"
+run_with_spinner "sudo parted \"$DRIVE\" --script mkpart Windows ntfs 513MiB 100%"
+sudo partprobe "$DRIVE"
+sudo udevadm settle
+if [[ "$DRIVE" =~ [0-9]$ ]]; then
+    PART1="${DRIVE}p1"
+    PART2="${DRIVE}p2"
+else
+    PART1="${DRIVE}1"
+    PART2="${DRIVE}2"
 fi
+sudo mkfs.vfat -F32 "$PART1"
+sudo mkfs.ntfs -f "$PART2"
 
-# =======================
-# Step 7: OOBE Skip & User Creation
-# =======================
-clear_step "Step 7: Auto user creation & OOBE skip"
-AUTO_USER="$USERNAME"
-# Here, implement autounattend.xml or registry modifications if needed
+sudo mkdir -p /mnt/win /mnt/boot /mnt/iso
+sudo mount -o loop,ro "$ISO_FILE" /mnt/iso
+WIM=""
+for filename in install.wim install.esd; do
+    if [[ -f "/mnt/iso/sources/$filename" ]]; then
+        WIM="/mnt/iso/sources/$filename"
+        break
+    fi
+done
+[[ -n "$WIM" ]] || { echo "ERROR: The ISO has no install.wim/install.esd" >&2; exit 1; }
+echo "Available Windows image editions:"
+wimlib-imagex info "$WIM" | grep -E '^(Index|Name):' || true
+read -r -p "Choose image index: " IMAGE_INDEX
+[[ "$IMAGE_INDEX" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid image index" >&2; exit 1; }
+wimlib-imagex info "$WIM" "$IMAGE_INDEX" >/dev/null
 
-# =======================
-# Step 8: Cleanup
-# =======================
-clear_step "Step 8: Cleanup & unmount"
+clear_step "Step 4: Applying Windows image to NTFS"
+# Direct NTFS application preserves NTFS metadata better than extracting to ext4.
+sudo wimlib-imagex apply "$WIM" "$IMAGE_INDEX" "$PART2"
+
+clear_step "Step 5: Creating UEFI boot files and BCD"
+sudo mount -t ntfs-3g "$PART2" /mnt/win
+sudo mount "$PART1" /mnt/boot
+[[ -f /mnt/win/Windows/System32/winload.efi ]] || { echo "Windows loader missing" >&2; exit 1; }
+# Explicit -s keeps the boot store on the removable drive; no host NVRAM update.
+sudo bcd-sys /mnt/win -s /mnt/boot -f uefi
+[[ -s /mnt/boot/EFI/Microsoft/Boot/BCD ]] || { echo "ERROR: BCD was not created" >&2; exit 1; }
+[[ -f /mnt/boot/EFI/Boot/bootx64.efi ]] || { echo "ERROR: UEFI fallback bootloader missing" >&2; exit 1; }
+
+clear_step "Step 6: Finishing"
+sync
 sudo umount /mnt/win
 sudo umount /mnt/boot
 sudo umount /mnt/iso
-rm -rf "$TEMP_WIN" "$TEMP_BOOT"
-
-echo -e "${GREEN}Windows To Go USB successfully created!${RESET}"
+echo -e "${GREEN}Windows files and UEFI BCD written. Physical boot has NOT yet been tested.${RESET}"
