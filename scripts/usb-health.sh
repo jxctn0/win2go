@@ -20,9 +20,9 @@ while (($#)); do
 done
 
 [[ -n "$device" && "$mib" =~ ^[1-9][0-9]*$ && "$seconds" =~ ^[1-9][0-9]*$ ]] || usage
-((mib <= 4096 && seconds <= 1800)) || { echo "Maximum: 4096 MiB, 1800 seconds" >&2; exit 2; }
+((${#mib} <= 4 && ${#seconds} <= 4 && mib <= 4096 && seconds <= 1800)) || { echo "Maximum: 4096 MiB, 1800 seconds" >&2; exit 2; }
 ((EUID == 0)) || { echo "Run with sudo to access disk and kernel logs" >&2; exit 2; }
-for cmd in lsblk readlink dd timeout dmesg awk grep mktemp; do
+for cmd in lsblk readlink dd timeout dmesg grep mktemp cmp head; do
   command -v "$cmd" >/dev/null || { echo "Missing command: $cmd" >&2; exit 2; }
 done
 
@@ -49,29 +49,17 @@ echo "USB device: $device"
 lsblk -dn -o NAME,SIZE,MODEL,TRAN,SERIAL "$device"
 echo "READ-ONLY test: $mib MiB, maximum $seconds seconds"
 echo "No writes or formatting will be performed."
-# 4 MiB blocks plus smaller remainder; direct IO reads, no output file on disk.
-blocks=$((mib / 4))
-remainder=$((mib % 4))
+# A single read shares one timeout across the entire requested range.
 read_rc=0
-if ((blocks > 0)); then
-  timeout --signal=TERM --kill-after=5s "${seconds}s" \
-    dd if="$device" of=/dev/null bs=4M count="$blocks" iflag=direct,fullblock status=progress \
-    2>"$tmp/dd-log" || read_rc=$?
-else
-  : > "$tmp/dd-log"
-fi
-if ((read_rc == 0 && remainder > 0)); then
-  timeout --signal=TERM --kill-after=5s "${seconds}s" \
-    dd if="$device" of=/dev/null bs=1M skip="$((blocks * 4))" count="$remainder" iflag=direct,fullblock status=progress \
-    2>>"$tmp/dd-log" || read_rc=$?
-fi
+LC_ALL=C timeout --signal=TERM --kill-after=5s "${seconds}s" \
+  dd if="$device" of=/dev/null bs=1M count="$mib" iflag=direct,fullblock status=progress \
+  2>"$tmp/dd-log" || read_rc=$?
 cat "$tmp/dd-log"
 
 new_errors=0
 if ((kernel_ok)) && dmesg --raw > "$tmp/after" 2>/dev/null; then
   # Kernel ring buffer may rotate; if so, report that comparison is uncertain.
-  after_lines=$(wc -l < "$tmp/after")
-  if ((after_lines >= before_lines)); then
+  if cmp -s "$tmp/before" <(head -n "$before_lines" "$tmp/after"); then
     tail -n "+$((before_lines + 1))" "$tmp/after" > "$tmp/new"
     if grep -Ei 'I/O error|error -110|error -62|reset .*usb|device descriptor read|Buffer I/O error|blk_update_request|critical medium error' "$tmp/new" > "$tmp/errors"; then
       new_errors=1
@@ -89,6 +77,9 @@ fi
 
 if ((read_rc != 0)); then
   echo "FAIL: read exited with status $read_rc"
+  exit 1
+elif ! grep -qFx "$mib+0 records in" "$tmp/dd-log"; then
+  echo "FAIL: read ended before completing $mib MiB"
   exit 1
 elif ((new_errors)); then
   echo "WARNING: read completed but new kernel errors appeared"

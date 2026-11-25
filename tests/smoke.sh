@@ -1,17 +1,43 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-bash -n win2go.sh
+
+for script in win2go.sh scripts/*.sh tests/*.sh; do
+  bash -n "$script"
+done
 echo "PASS: Bash syntax"
-# All tests below exit before reaching the USB-erasure step.
-if bash ./win2go.sh --iso /definitely-not-a-real-windows-image.iso >/dev/null 2>&1; then
-  echo "FAIL: accepted missing ISO" >&2
-  exit 1
-fi
-echo "PASS: missing ISO rejected"
-if bash ./win2go.sh --iso /definitely-not-a-real-windows-image.iso --drive /dev/sda >/dev/null 2>&1; then
-  echo "FAIL: accepted nonexistent ISO" >&2
-  exit 1
-fi
-echo "PASS: rejects invalid input without formatting"
+
+# Detect any attempt to run privileged commands during input validation.
+sudo() {
+  echo "UNEXPECTED_PRIVILEGED_COMMAND" >&2
+  return 99
+}
+export -f sudo
+
+expect_failure() {
+  local description=$1 expected_status=$2 expected_message=$3
+  shift 3
+  local status=0 output
+  output=$("$@" 2>&1) || status=$?
+  if [[ "$status" != "$expected_status" || "$output" != *"$expected_message"* ||
+        "$output" == *UNEXPECTED_PRIVILEGED_COMMAND* ]]; then
+    printf 'FAIL: %s (status %s)\n%s\n' "$description" "$status" "$output" >&2
+    exit 1
+  fi
+  echo "PASS: $description"
+}
+
+expect_failure "missing ISO rejected" 1 "ISO not found:" \
+  bash ./win2go.sh --iso /definitely-not-a-real-windows-image.iso
+expect_failure "missing ISO rejected when a target is specified" 1 "ISO not found:" \
+  bash ./win2go.sh --iso /definitely-not-a-real-windows-image.iso --drive /dev/sda
+expect_failure "non-block target rejected" 1 "Target must be a whole USB disk" \
+  bash ./win2go.sh --iso ./win2go.sh --drive /dev/null
+expect_failure "missing argument rejected" 2 "--iso requires a value" \
+  bash ./win2go.sh --iso
+expect_failure "unsupported option rejected" 2 "Unsupported option: -y" \
+  bash ./win2go.sh -y
+expect_failure "out-of-range USB read size rejected before device access" 2 "Maximum:" \
+  bash scripts/usb-health.sh --device /dev/sda --mib 18446744073709551617
+
 echo "NOTE: USB partitioning and Windows boot require separate real-device tests."

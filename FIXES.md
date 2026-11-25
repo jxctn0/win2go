@@ -64,7 +64,7 @@ BCD-SYS: https://github.com/jpz4085/BCD-SYS. Debe instalarse y comprobarse antes
 - No implementa creación automática de usuario, omisión de OOBE ni instalación de drivers.
 - Windows 10/11 To Go todavía debe probarse con dispositivo físico.
 - No se debe ejecutar contra discos con información importante.
-- No se recomienda utilizar `-y`; la confirmación destructiva siempre debe ser explícita.
+- La opción `-y` se rechaza. La confirmación del borrado es explícita.
 
 ## Pruebas no destructivas
 ```sh

@@ -13,19 +13,18 @@ mode="${1:---check}"
 . /etc/os-release
 # Bash conditionals avoid invalid unquoted spaces in case patterns.
 if [[ "${ID:-}" != "ubuntu" && "${ID:-}" != "linuxmint" &&
-      " ${ID_LIKE:-} " != *" ubuntu "* &&
-      " ${ID_LIKE:-} " != *" debian "* ]]; then
+      " ${ID_LIKE:-} " != *" ubuntu "* ]]; then
   echo "This installer supports Ubuntu and Linux Mint only." >&2
   exit 1
 fi
 
 # These packages provide hivexsh (libhivex-bin), hivexregedit (libwin-hivex-perl), readpe/peres, and the
 # FAT32/NTFS utilities used by BCD-SYS and Win2Go.
-packages=(git ca-certificates util-linux parted dosfstools ntfs-3g wimtools
+packages=(sudo udev git ca-certificates util-linux fdisk bsdextrautils parted dosfstools ntfs-3g wimtools
           libhivex-bin libwin-hivex-perl pev attr fatattr)
 
-required_commands=(git lsblk findmnt readlink parted partprobe udevadm
-                   mkfs.vfat mkfs.ntfs mount umount wimlib-imagex
+required_commands=(sudo git lsblk findmnt readlink sfdisk hexdump parted partprobe udevadm
+                   mkfs.vfat mkfs.ntfs ntfs-3g mount umount wimlib-imagex
                    hivexsh hivexregedit readpe peres setfattr fatattr bcd-sys)
 missing=()
 check_commands() {
@@ -44,7 +43,7 @@ check_commands() {
 
 if [[ "$mode" == "--check" ]]; then
   check_commands
-  exit $?
+  exit 0
 fi
 
 echo "Will install APT packages: ${packages[*]}"
