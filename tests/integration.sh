@@ -120,7 +120,7 @@ findmnt() {
 }
 
 losetup() {
-    [[ "$*" == '-lnr -O BACK-MAJ:MIN -- /dev/loop0' ]] || unexpected losetup "$@"
+    [[ "$*" == '--list --noheadings --raw -O BACK-MAJ:MIN -- /dev/loop0' ]] || unexpected losetup "$@"
     case "$scenario" in
         loop-same|loop-overmounted) echo 240:1 ;;
         *) echo 241:1 ;;

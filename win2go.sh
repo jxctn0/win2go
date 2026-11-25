@@ -96,7 +96,7 @@ block_disks() {
         backing=$(cat -- "$node/loop/backing_file") || return 1
         [[ "$backing" == /* && -f "$backing" ]] || return 1
         # Reject an overmounted path or other pathname substitution.
-        backing_id=$(losetup -lnr -O BACK-MAJ:MIN -- "/dev/${node##*/}") || return 1
+        backing_id=$(losetup --list --noheadings --raw -O BACK-MAJ:MIN -- "/dev/${node##*/}") || return 1
         [[ "$backing_id" =~ ^[0-9]+:[0-9]+$ ]] || return 1
         path_disks "$backing" "$((depth + 1))" "$backing_id"
     elif [[ -d "$node/slaves" ]]; then

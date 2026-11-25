@@ -168,7 +168,7 @@ assemble_raw() {
 
 same_loop() {
     [[ "$loop" =~ ^/dev/loop[0-9]+$ && -b "$loop" &&
-       "$(losetup -lnr -O BACK-MAJ:MIN,BACK-INO -- "$loop")" == "$backing" ]]
+       "$(losetup --list --noheadings --raw -O BACK-MAJ:MIN,BACK-INO -- "$loop")" == "$backing" ]]
 }
 
 cleanup_loop() {
@@ -212,8 +212,8 @@ verify_bcd_entry() {
 }
 
 install_bcd() {
-    local build="$1/raw-build" disk owner path source mounted attempt cleanup_status=0
-    local loop="" mounts="" backing=""
+    local build="$1/raw-build" disk owner path source mounted attempt active_mounts cleanup_status=0
+    local loop="" mounts="" backing="" existing_loop=${3:-}
     [[ "${2:-}" == --allow-loop-writes && $EUID == 0 && "${SUDO_UID:-}" =~ ^[0-9]+$ ]] ||
         die "BCD requires explicit loop-write approval and a private sudo mount namespace"
     require losetup lsblk findmnt bcd-sys mount umount mountpoint readpe hivexsh blkid ntfs-3g flock
@@ -230,13 +230,20 @@ install_bcd() {
     [[ "$owner" == "$SUDO_UID:1:600:regular file" ]] || die "Unexpected image owner, mode or type"
     backing=$(stat -Lc '%Hd:%Ld %i' -- "$path")
     [[ -c /dev/loop-control ]] || die "No loop control device in this environment"
-    [[ -z "$(losetup -j "$path")" ]] || die "Image already has a loop mapping"
+    if [[ -n "$existing_loop" ]]; then
+        loop=$existing_loop
+        same_loop || die "Existing loop does not match the RAW image"
+        active_mounts=$(lsblk -nro MOUNTPOINTS -- "$loop") && [[ -z "$active_mounts" ]] ||
+            die "Existing loop has active mounts"
+    else
+        [[ -z "$(losetup -j "$path")" ]] || die "Image already has a loop mapping"
+    fi
     mounts=$(mktemp -d /run/win2go-lab.XXXXXXXX)
     mkdir -- "$mounts/windows" "$mounts/esp"
     trap 'cleanup_loop || exit 1' EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
-    loop=$(losetup --find --show --partscan -- "$path")
+    if [[ -z "$loop" ]]; then loop=$(losetup --find --show --partscan -- "$path"); fi
     same_loop || die "Loop backing identity changed"
     printf 'Loop %s is backed by %s (device and inode %s)\n' "$loop" "$disk" "$backing"
     for attempt in {1..20}; do
@@ -247,7 +254,7 @@ install_bcd() {
        "$(lsblk -dnro PKNAME -- "${loop}p1")" == "${loop##*/}" &&
        "$(lsblk -dnro PKNAME -- "${loop}p2")" == "${loop##*/}" ]] ||
         die "Unexpected loop partition nodes"
-    [[ -z "$(lsblk -nro MOUNTPOINTS -- "$loop" | tr -d '\n')" ]] ||
+    active_mounts=$(lsblk -nro MOUNTPOINTS -- "$loop") && [[ -z "$active_mounts" ]] ||
         die "Unexpected existing mounts on loop"
     [[ "$(blkid -p -s VERSION -o value "${loop}p1")" == FAT32 &&
        "$(blkid -p -s TYPE -o value "${loop}p2")" == ntfs ]] ||
@@ -317,7 +324,8 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
         prepare) [[ $# == 3 ]] || die "Usage: $0 prepare WORK_DIR INDEX"; prepare_raw "$2" "$3" ;;
         assemble) [[ $# == 2 ]] || die "Usage: $0 assemble WORK_DIR"
             assemble_raw "$2/raw-build" 2>&1 | tee "$2/raw-build/assemble.log" ;;
-        bcd) [[ $# == 3 ]] || die "Usage: $0 bcd WORK_DIR --allow-loop-writes"; install_bcd "$2" "$3" ;;
+        bcd) [[ $# == 3 || $# == 4 ]] || die "Usage: $0 bcd WORK_DIR --allow-loop-writes [EXISTING_LOOP]"
+            install_bcd "$2" "$3" "${4:-}" ;;
         boot) [[ $# == 4 || $# == 5 ]] || die "Usage: $0 boot WORK_DIR OVMF_CODE OVMF_VARS [none|gtk|sdl]"
             boot_raw "$2" "$3" "$4" "${5:-none}" ;;
         *) die "Usage: $0 {inspect|prepare|assemble|bcd|boot} ..." ;;
