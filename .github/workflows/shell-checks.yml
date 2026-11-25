@@ -1,0 +1,25 @@
+name: Shell checks
+
+on:
+  push:
+    branches:
+      - main
+      - fix/usb-selection-and-error-handling
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate bash scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          for script in win2go.sh scripts/*.sh tests/*.sh; do
+            bash -n "$script"
+          done
+      - name: Run nondestructive smoke tests
+        shell: bash
+        run: bash tests/smoke.sh
