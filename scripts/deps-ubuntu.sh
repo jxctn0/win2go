@@ -19,10 +19,10 @@ if [[ "${ID:-}" != "ubuntu" && "${ID:-}" != "linuxmint" &&
   exit 1
 fi
 
-# These packages provide hivexsh/hivexregedit, readpe/peres, and the
+# These packages provide hivexsh (libhivex-bin), hivexregedit (libwin-hivex-perl), readpe/peres, and the
 # FAT32/NTFS utilities used by BCD-SYS and Win2Go.
 packages=(git ca-certificates util-linux parted dosfstools ntfs-3g wimtools
-          libhivex-bin pev attr fatattr)
+          libhivex-bin libwin-hivex-perl pev attr fatattr)
 
 required_commands=(git lsblk findmnt readlink parted partprobe udevadm
                    mkfs.vfat mkfs.ntfs mount umount wimlib-imagex
