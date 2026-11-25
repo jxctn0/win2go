@@ -13,6 +13,28 @@ Esta rama está en desarrollo y **no se ha validado el arranque de Windows en ha
 - Valida la ISO y el índice antes de particionar.
 - Aplica la imagen directamente sobre NTFS.
 
+## Instalación automatizada de dependencias (Ubuntu / Linux Mint)
+
+Primero verificar, sin modificar el sistema:
+
+```bash
+bash scripts/deps-ubuntu.sh --check
+```
+
+Instalar los paquetes APT faltantes:
+
+```bash
+bash scripts/deps-ubuntu.sh --install
+```
+
+El instalador usa `libhivex-bin` (no `hivex-bin`), `pev`, `attr` y `fatattr`.
+Si falta BCD-SYS ofrece descargar su repositorio para revisión, **pero no ejecuta su
+instalador automáticamente**, puesto que es código de terceros. Después de revisar
+`setup.sh`, ejecutar manualmente `sudo ./setup.sh install` desde su directorio.
+
+El comando `bcd-sys --help` también puede reportar dependencias faltantes, aunque
+`command -v bcd-sys` ya devuelva una ruta.
+
 ## Dependencias adicionales
 `parted`, `partprobe`, `udevadm`, `mkfs.vfat`, `mkfs.ntfs`, `mount`, `ntfs-3g`, `wimlib-imagex` y **BCD-SYS** (`bcd-sys`).
 
