@@ -2,6 +2,7 @@
 # Exercise the real partitioning, filesystem and WIM tools on regular files.
 set -euo pipefail
 export LC_ALL=C
+source "$(dirname -- "${BASH_SOURCE[0]}")/../lib/windows-media.sh"
 for cmd in parted sfdisk mkfs.vfat mkfs.ntfs blkid wimlib-imagex ntfscat; do
     command -v "$cmd" >/dev/null || { echo "Missing image test dependency: $cmd" >&2; exit 1; }
 done
@@ -13,8 +14,8 @@ fat="$work/esp.img"
 ntfs="$work/windows.img"
 
 truncate -s 768M "$disk"
-parted --script "$disk" mklabel gpt mkpart ESP fat32 1MiB 513MiB set 1 esp on \
-    mkpart Windows ntfs 513MiB 100%
+windows_gpt_args "$disk"
+parted "${PARTED_ARGS[@]}"
 sfdisk --verify "$disk"
 table=$(sfdisk --dump "$disk")
 grep -qx 'label: gpt' <<< "$table"
@@ -39,7 +40,7 @@ for image in install.wim install.esd; do
     truncate -s 96M "$ntfs"
     mkfs.ntfs -F -f -s 512 -p 1050624 -H 255 -S 63 "$ntfs"
     [[ "$(blkid -p -s TYPE -o value "$ntfs")" == ntfs ]]
-    wimlib-imagex apply "$work/$image" 1 "$ntfs"
+    apply_windows_image "$work/$image" 1 "$ntfs"
     ntfscat "$ntfs" /Windows/System32/winload.efi | cmp - "$work/input/Windows/System32/winload.efi"
     echo "PASS: $image applied directly to an NTFS image"
 done

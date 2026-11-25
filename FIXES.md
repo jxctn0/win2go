@@ -89,3 +89,54 @@ Las imágenes dispersas permiten verificar la tabla GPT, los sistemas FAT32 y NT
 - `sudo -v` comprueba la autenticación. Una regla de sudo por comando, un controlador o una operación de E/S aún pueden fallar durante la instalación. Una vez creada la GPT, un fallo puede dejar el disco parcialmente preparado.
 - La versión de BCD-SYS inspeccionada usa nombres temporales fijos bajo `/tmp`. Evita ejecuciones concurrentes de BCD-SYS durante la instalación.
 - Si un punto de montaje sigue ocupado, el instalador conserva su directorio e informa la ruta para inspección. Una terminación forzada o la pérdida de alimentación pueden impedir la limpieza.
+
+## Validación con una ISO real en una imagen RAW
+
+La prueba de laboratorio usa `tests/windows-image.sh`. Comparte con el instalador la definición GPT, la selección x86-64, la aplicación directa sobre NTFS y la comprobación del BCD. El laboratorio ensambló las particiones en archivos dispersos y reservó el uso de loop para BCD-SYS. Esa vía no cubre la selección de una USB física ni el montaje de la ISO por descriptor que hace el instalador.
+
+### Repetir las etapas sin privilegios
+
+```bash
+iso=/home/santi/Descargas/Win10_22H2_Spanish_Mexico_x64v1.iso
+work="/tmp/win2go-lab-$USER-$(date +%s)"
+bash tests/windows-image.sh inspect "$iso" "$work"
+bash tests/windows-image.sh prepare "$work" 4
+```
+
+`inspect` registra la huella SHA-256, comprueba la estructura UDF con 7-Zip, valida el encabezado x86-64 del cargador EFI de la ISO y verifica el WIM o ESD con wimlib. `prepare` estima el espacio de trabajo, crea una RAW dispersa de 32 GiB y registra las particiones y los archivos de Windows verificados. Si solo se interrumpió el ensamblaje y existe `raw-build/applied.ok`, `bash tests/windows-image.sh assemble "$work"` retoma esa etapa con las particiones intermedias.
+
+### Generar el BCD y probar el arranque
+
+La etapa BCD requiere autorización específica para escribir en el loop de `"$work/raw-build/windows-togo.raw"`, un sistema con loop habilitado, BCD-SYS instalado y permisos para montar. Ejecútala solo después de confirmar el archivo de destino. El script vuelve a comprobar el dispositivo y el inodo de respaldo y monta Windows en solo lectura. El espacio de nombres de montajes permite aislar los archivos temporales de BCD-SYS.
+
+```bash
+set -o pipefail
+sudo unshare --mount --propagation private \
+  bash tests/windows-image.sh bcd "$work" --allow-loop-writes 2>&1 | tee "$work/bcd.log"
+```
+
+Con QEMU x86 y OVMF instalados, utiliza una pareja de firmware y variables del mismo paquete. El laboratorio presenta la RAW como almacenamiento USB virtual y conserva los cambios del invitado en una instantánea temporal. La máquina arranca sin red y usa emulación TCG, que puede resultar lenta.
+
+```bash
+bash tests/windows-image.sh boot "$work" \
+  /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_VARS_4M.fd
+```
+
+En el monitor de QEMU, guarda capturas con `screendump etapa.ppm`. Se guardan junto con `qemu.log` y `serial.log`. Registra por separado la pantalla o error de Windows Boot Manager, evidencia del kernel (por ejemplo, un código de detención de Windows) y la llegada a OOBE. Para acreditar que el primer arranque terminó, documenta el final de OOBE y la pantalla de inicio de sesión o el escritorio. [Monitor de QEMU](https://www.qemu.org/docs/master/system/monitor.html) · [Opciones de ejecución de QEMU](https://www.qemu.org/docs/master/system/invocation.html)
+
+### Resultado con Windows 10 22H2 es-MX
+
+| Etapa | Resultado observado |
+| --- | --- |
+| ISO y archivo de instalación | 7-Zip comprobó 906 archivos. El cargador de la ISO es una aplicación EFI x86-64. `sources/install.wim` se verificó completo con wimlib. |
+| Ediciones | Los índices 1–6 son x86-64 e incluyen Boot Manager y `winload.efi`. Home, Home Single Language, Education, Pro, Pro Education y Pro for Workstations. Se aplicó Pro (4). |
+| GPT y formatos | RAW de 32 GiB lógicos y 10,1 GiB asignados. GPT verificada por `sfdisk`. ESP FAT32 de 512 MiB desde 1 MiB (sin errores de `fsck.fat -n`) y Windows NTFS 3.1 desde 513 MiB. Se compararon las particiones con los archivos intermedios y se volvieron a leer sus firmas desde la RAW. |
+| Aplicación | wimlib completó la extracción sobre NTFS y avisó que omitió atributos extendidos de 11 393 archivos. `ntfscat` permitió comprobar `bootmgfw.efi`, `winload.efi`, `ntoskrnl.exe` y el registro `SYSTEM`. `winload.efi` usa el subsistema Windows Boot Application. |
+| BCD-SYS | Pendiente. El entorno aislado no exponía el control de loop y el intento autorizado de ejecutar BCD-SYS devolvió `sudo: a password is required` antes de asociar el archivo. El Boot Manager verificado provenía de la partición Windows. |
+| QEMU y OVMF | Pendiente. Los paquetes no estaban instalados y la instalación autorizada no pudo continuar sin autenticación de sudo. No se observó ninguna pantalla de arranque. |
+
+La primera comprobación PE trataba `winload.efi` como aplicación EFI genérica. Se corrigió el criterio para comprobar su subsistema real y se reanudó el ensamblaje desde el NTFS ya aplicado. El verificador de BCD también se probó con un registro sintético.
+
+SHA-256 registrado de la ISO: `bf02c401644a4a9249ee206faa9fd1691f4ec18bb37a9ea4ffe5c010dc147492`. Es una huella de la copia probada. La comparación con una huella oficial queda pendiente.
+
+Antes de una prueba física, queda por verificar que BCD-SYS escriba el BCD y el cargador de respaldo en la ESP y que Windows complete el primer arranque desde el USB virtual.

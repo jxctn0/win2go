@@ -2,6 +2,7 @@
 set -eo pipefail
 shopt -s nullglob
 export LC_ALL=C
+source "$(dirname -- "${BASH_SOURCE[0]}")/lib/windows-media.sh"
 
 # =======================
 # Win2Go USB Creator
@@ -281,8 +282,7 @@ partition_prefix=$DRIVE
 [[ "$DRIVE" != *[0-9] ]] || partition_prefix+=p
 PART1="${partition_prefix}1"
 PART2="${partition_prefix}2"
-PARTED_ARGS=(--script "$DRIVE" mklabel gpt mkpart ESP fat32 1MiB 513MiB set 1 esp on
-             mkpart Windows ntfs 513MiB 100%)
+windows_gpt_args "$DRIVE"
 
 check_target
 printf 'Selected USB disk: %s (%s bytes, %s)\n' "$DRIVE" "$SIZE_BYTES" "$DRIVE_ID"
@@ -328,7 +328,7 @@ read -r -p "Choose Windows edition index: " IMAGE_INDEX || fail "No Windows imag
 [[ "$IMAGE_INDEX" =~ ^[1-9][0-9]*$ ]] &&
     edition_info=$(wimlib-imagex info "$WIM" "$IMAGE_INDEX") ||
     fail "Invalid Windows image index"
-grep -Eq '^Architecture:[[:space:]]+x86_64$' <<< "$edition_info" ||
+windows_image_is_x64 "$edition_info" ||
     fail "The selected edition must be a Windows x86_64 image for UEFI boot"
 read -r -p "⚠️ This will ERASE all data on $DRIVE. Continue? (yes/no): " yn
 if [[ "$yn" != "yes" ]]; then echo "Canceled."; exit 1; fi
@@ -361,7 +361,7 @@ clear_step "Step 4: Applying Windows image to NTFS"
 # Direct NTFS application preserves NTFS metadata better than extracting to ext4.
 check_target
 check_partitions
-sudo wimlib-imagex apply "$WIM" "$IMAGE_INDEX" "$PART2"
+apply_windows_image "$WIM" "$IMAGE_INDEX" "$PART2" sudo
 
 clear_step "Step 5: Creating UEFI boot files and BCD"
 check_target
@@ -378,11 +378,7 @@ check_mount "$BOOT_MOUNT" "$PART1"
 sudo test -f "$WIN_MOUNT/Windows/System32/winload.efi" || { echo "Windows loader missing" >&2; exit 1; }
 # Explicit -s keeps the boot store on the removable drive; no host NVRAM update.
 sudo bcd-sys "$WIN_MOUNT" -s "$BOOT_MOUNT" -f uefi
-BCD="$BOOT_MOUNT/EFI/Microsoft/Boot/BCD"
-sudo test -s "$BCD" || fail "BCD was not created"
-sudo hivexsh "$BCD" <<<'cd Objects\{9dea862c-5cdd-4e70-acc1-f32b344d4795}\Elements\24000001' ||
-    fail "BCD is unreadable or has no Windows Boot Manager display order"
-sudo test -s "$BOOT_MOUNT/EFI/BOOT/BOOTX64.efi" || { echo "ERROR: UEFI fallback bootloader missing" >&2; exit 1; }
+validate_windows_boot "$BOOT_MOUNT" sudo
 
 clear_step "Step 6: Finishing"
 sudo sync -f -- "$WIN_MOUNT" "$BOOT_MOUNT"

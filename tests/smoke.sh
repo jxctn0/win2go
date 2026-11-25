@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-for script in win2go.sh scripts/*.sh tests/*.sh; do
+for script in win2go.sh lib/*.sh scripts/*.sh tests/*.sh; do
   bash -n "$script"
 done
 echo "PASS: Bash syntax"
@@ -39,5 +39,8 @@ expect_failure "unsupported option rejected" 2 "Unsupported option: -y" \
   bash ./win2go.sh -y
 expect_failure "out-of-range USB read size rejected before device access" 2 "Maximum:" \
   bash scripts/usb-health.sh --device /dev/win2go-unused --mib 18446744073709551617
+
+expect_failure "virtual BCD refuses loop writes without explicit opt-in" 1 "requires explicit loop-write approval" \
+  bash tests/windows-image.sh bcd /tmp/win2go-test-no-image --no-loop-writes
 
 echo "NOTE: Physical Windows boot remains unverified."
