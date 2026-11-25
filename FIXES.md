@@ -13,6 +13,25 @@ Esta rama está en desarrollo y **no se ha validado el arranque de Windows en ha
 - Valida la ISO y el índice antes de particionar.
 - Aplica la imagen directamente sobre NTFS.
 
+## Diagnóstico USB de solo lectura
+
+Antes de crear Windows To Go, identifica el dispositivo con `lsblk -o NAME,SIZE,MODEL,TRAN,MOUNTPOINTS`.
+Ejemplo (sustituye el dispositivo después de verificarlo):
+
+```bash
+sudo bash scripts/usb-health.sh --device /dev/sdb --mib 1024 --timeout 180
+```
+
+El diagnóstico:
+- Rechaza discos SATA/internos y particiones (solo dispositivos USB completos).
+- Lee 1 GiB por defecto con `dd` y muestra su velocidad.
+- Comprueba los mensajes **nuevos** de error del kernel cuando `dmesg` está disponible.
+- No escribe datos, no modifica particiones ni formatea.
+- Permite ajustar el tamaño con `--mib` (hasta 4096) y el límite de tiempo con `--timeout`.
+- **No demuestra** velocidad de escritura, capacidad real ni arranque de Windows.
+
+GitHub Actions comprueba la sintaxis de los scripts y ejecuta las pruebas básicas sin acceso a dispositivos físicos. La prueba de lectura se ejecuta manualmente en el equipo, ya que requiere el dispositivo USB real.
+
 ## Instalación automatizada de dependencias (Ubuntu / Linux Mint)
 
 Primero verificar, sin modificar el sistema:
