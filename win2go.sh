@@ -152,8 +152,8 @@ if [[ -n "$MOUNTED" ]]; then
 fi
 
 # Essential preflight: do not erase a device if Windows boot configuration cannot be built.
-for cmd in parted partprobe udevadm mkfs.vfat mkfs.ntfs wimlib-imagex bcd-sys mount; do
-    command -v "$cmd" >/dev/null || { echo "ERROR: Missing dependency: $cmd" >&2; exit 1; }
+for cmd in parted partprobe udevadm mkfs.vfat mkfs.ntfs wimlib-imagex bcd-sys mount hivexsh hivexregedit readpe peres setfattr fatattr; do
+    command -v "$cmd" >/dev/null || { echo "ERROR: Missing dependency: $cmd. Run: bash scripts/deps-ubuntu.sh --install" >&2; exit 1; }
 done
 [[ "$(lsblk -dn -o TYPE "$DRIVE")" == "disk" && "$(lsblk -dn -o TRAN "$DRIVE")" == "usb" ]] || {
     echo "ERROR: Target is not a whole USB disk." >&2; exit 1;
