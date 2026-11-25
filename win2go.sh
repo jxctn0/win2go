@@ -137,15 +137,44 @@ echo -e "${GREEN}Selected ISO: $ISO_FILE${RESET}"
 # =======================
 clear_step "Step 2: Select USB drive"
 
-DRIVES=($(lsblk -dpno NAME,SIZE,MODEL | grep -v "loop\|sr0"))
+# Detectar únicamente unidades USB físicas
+mapfile -t DRIVES < <(
+    lsblk -dnpo NAME,TYPE,TRAN |
+    awk '$2=="disk" && $3=="usb" {print $1}'
+)
+
+if [[ ${#DRIVES[@]} -eq 0 ]]; then
+    echo "ERROR: No se encontraron unidades USB."
+    exit 1
+fi
+
+echo "Unidades USB disponibles:"
+
 for i in "${!DRIVES[@]}"; do
-    echo "$((i+1))) ${DRIVES[$i]}"
+    DRIVE_INFO=$(lsblk -dn -o SIZE,MODEL "${DRIVES[$i]}")
+    echo "$((i+1))) ${DRIVES[$i]} - $DRIVE_INFO"
 done
 
-if ! $AUTO_YES || [[ -z "$DRIVE" ]]; then
-    read -p "Select the drive number to use: " drv_choice
-    DRIVE=$(echo "${DRIVES[$((drv_choice-1))]}" | awk '{print $1}')
+# Selección con validación
+while true; do
+    read -r -p "Selecciona el número de la USB: " drv_choice
+
+    if [[ "$drv_choice" =~ ^[0-9]+$ ]] &&
+       (( drv_choice >= 1 && drv_choice <= ${#DRIVES[@]} )); then
+        DRIVE="${DRIVES[$((drv_choice-1))]}"
+        break
+    fi
+
+    echo "Selección inválida."
+done
+
+# Verificar que la unidad seleccionada es USB
+if [[ "$(lsblk -dn -o TRAN "$DRIVE")" != "usb" ]]; then
+    echo "ERROR: La unidad seleccionada no es USB."
+    exit 1
 fi
+
+echo "Unidad seleccionada: $DRIVE"
 
 # Warn large drives
 SIZE_GB=$(lsblk -dn -b -o SIZE "$DRIVE")
